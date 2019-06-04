@@ -1,0 +1,115 @@
+Hippo<-read.csv("C:/Users/julie.wisch/Documents/ADRC/HASD_ACS_DR14_3TMR.csv")
+#Hippo<-read.csv("W:/ances/julie/Data/ADRC/Aggregated/HASD_ACS_DR14_3TMR.csv")
+Hippo<-Hippo[,c(4:5, 21:22, 343, 55:56)]
+
+df.clin<-read.csv("C:/Users/julie.wisch/Documents/ADRC/DR_clinical_20190122.csv")
+#df.clin<-read.csv("W:/ances/julie/Data/ADRC/Aggregated/DR_clinical_20190122.csv")
+df.clin$TESTDATE<-as.Date(df.clin$TESTDATE, format = "%Y-%m-%d")
+df.clin<-df.clin[,2:4]
+
+df.demog<-read.csv("C:/Users/julie.wisch/Documents/ADRC/DR_demographics_20190122.csv")
+#df.demog<-read.csv("W:/ances/julie/Data/ADRC/Aggregated/DR_demographics_20190122.csv")
+df.demog$BIRTH<-format(as.Date(df.demog$BIRTH, "%d-%b-%y"), "19%y-%m-%d")
+
+df.demog<-merge(df.demog, df.clin, by = "ID", all.y = FALSE)
+
+Hippo$MR_Date<-as.Date(Hippo$MR_Date, format = "%m/%d/%Y")
+Hippo<-MatchbyNearestDate(Hippo, df.demog, "ID", "MR_Date", "TESTDATE") #have multiple timepoints for a TON of these guys
+
+Hippo$apoe4<-as.factor(ifelse(Hippo$apoe == 24 | Hippo$apoe > 33, 1, 0))
+Hippo<-Hippo[complete.cases(Hippo$apoe4),]
+Hippo<-Hippo[Hippo$CDR == 0,]#only cognitively normals
+
+Hippo$Vol<-scale((Hippo$MR_LV_HIPPOCAMPUS+Hippo$MR_RV_HIPPOCAMPUS)/Hippo$EstimatedTotalIntraCranialVol, center = TRUE, scale = TRUE)
+Hippo$CerebVol<-scale((Hippo$MR_LV_CBLL_CORTEX+Hippo$MR_RV_CBLL_CORTEX)/Hippo$EstimatedTotalIntraCranialVol, center = TRUE, scale = TRUE)
+
+
+Hippo$Age<-as.numeric(difftime(Hippo$MR_Date, Hippo$BIRTH, units = "weeks")/52)
+
+Hippo<-Hippo[with(Hippo, order(ID, MR_Date)),]
+Hippo<-Hippo[,c("ID", "MR_Date", "BIRTH", "GENDER", "EDUC", "apoe4", "race2", "Vol", "CerebVol", "Age", "TESTDATE", "CDR")]
+
+Hippo.hold<-Hippo
+Hippo.all<-Hippo
+Hippo<-ddply(Hippo.all,.(ID), tail, 1) #Keeping just the most recent volume for hippo
+
+Hippo.head<-ddply(Hippo.all,.(ID), head, 1)
+
+Hipporesult<-merge(Hippo.head[,c("ID", "Age", "Vol", "CerebVol")], Hippo[,c("ID", "Age", "Vol", "CerebVol")], by = "ID")
+Hipporesult$VolRateofChange<-(Hipporesult$Vol.y - Hipporesult$Vol.x)/(Hipporesult$Age.y - Hipporesult$Age.x)
+Hipporesult$CerebVolRateofChange<-(Hipporesult$CerebVol.y - Hipporesult$CerebVol.x)/(Hipporesult$Age.y - Hipporesult$Age.x)
+Hipporesult<-Hipporesult[Hipporesult$VolRateofChange < 10 | Hipporesult$VolRateofChange > -10,]
+Hipporesult<-Hipporesult[complete.cases(Hipporesult),]
+lm_coefs<-Hipporesult[,c("ID", "VolRateofChange")]
+Hippo.all<-merge(Hippo.all, lm_coefs[,c("ID", "VolRateofChange")], by = "ID", all.x = FALSE, all.y = FALSE)
+
+lm_coefs<-Hipporesult[,c("ID", "CerebVolRateofChange")]
+
+Hippo.all<-merge(Hippo.all, lm_coefs[,c("ID", "CerebVolRateofChange")], by = "ID", all.x = FALSE, all.y = FALSE)
+Hippo.all<-Hippo.all[,c("ID", "GENDER", "EDUC", "apoe4", "race2", "Age", "VolRateofChange", "CerebVolRateofChange")]
+Hippo.all<-data.frame(Hippo.all[!duplicated(Hippo.all$ID), ])
+Hippo.all$VolRateofChange<-as.numeric(Hippo.all$VolRateofChange)
+Hippo.all$CerebVolRateofChange<-as.numeric(Hippo.all$CerebVolRateofChange)
+rm(df.clin,  lm_coefs, coef.fcn)
+
+
+df.pib<-read.csv("C:/Users/julie.wisch/Documents/ADRC/HASD_ACS_DR14_PIB.csv")
+df.tau<-read.csv("C:/Users/julie.wisch/Documents/SexDiffs/HASD_ACS_DR14_TAU.csv")
+
+# df.pib<-read.csv("W:/ances/julie/Data/ADRC/Aggregated/HASD_ACS_DR14_PIB.csv")
+# df.tau<-read.csv("W:/ances/julie/Data/ADRC/Aggregated/HASD_ACS_DR14_TAU.csv")
+
+df.tau<-df.tau[,c(1:23, 806:1065)]
+df.tau<-df.tau[,c(1:27, 33:49, 85:97, 133:142, 156:159, 173:191, 228:239, 275:283)]
+df.tau$PET_Date<-as.Date(df.tau$PET_Date, format = "%m/%d/%Y")
+
+df.pib<-df.pib[,c(1:18, 799:1062)]
+df.pib<-df.pib[,c(1:22, 28:44, 80:92, 128:137, 151:154, 168:186, 223:234, 270:278)]
+df.pib$PET_Date<-as.Date(df.pib$PET_Date, format = "%m/%d/%Y")
+
+#####Keeping only PIB positive people
+#df.pib<-df.pib[df.pib$PUP_fSUVR_rsf_TOT_CORTMEAN > 1.42,]
+#################
+
+df.tau<-df.tau[with(df.tau, order(ID, PET_Date)),]
+df.tau<-ddply(df.tau,.(ID), tail, 1)
+
+df.pib<-df.pib[with(df.pib, order(ID, PET_Date)),]
+#df.pib<-ddply(df.pib,.(ID), tail, 1)
+
+df.demog<-read.csv("C:/Users/julie.wisch/Documents/ADRC/DR_demographics_20190122.csv")
+#df.demog<-read.csv("W:/ances/julie/Data/ADRC/Aggregated/DR_demographics_20190122.csv")
+df.demog$BIRTH<-format(as.Date(df.demog$BIRTH, "%d-%b-%y"), "19%y-%m-%d")
+
+df.clin<-read.csv("C:/Users/julie.wisch/Documents/ADRC/DR_clinical_20190122.csv")
+#df.clin<-read.csv("W:/ances/julie/Data/ADRC/Aggregated/DR_clinical_20190122.csv")
+df.clin$TESTDATE<-as.Date(df.clin$TESTDATE, format = "%Y-%m-%d")
+
+df.clin<-df.clin[,2:4]
+
+df<-merge(df.demog, df.clin, by = "ID", all.y = FALSE)
+df$BIRTH<-as.Date(df$BIRTH, format = "%Y-%m-%d")
+
+colnames(df.pib)[5]<-"PET_Date_PIB"
+colnames(df.tau)[5]<-"PET_Date_tau"
+df.PET<-MatchbyNearestDate(df.tau, df.pib, "ID", "PET_Date_tau", "PET_Date_PIB")
+df.PET$TimeBetween<-as.numeric((df.PET$PET_Date_PIB - df.PET$PET_Date_tau)/365)
+
+df<-MatchbyNearestDate(df.PET, df, "ID", "PET_Date_tau", "TESTDATE")
+df<-df[df$TimeBetween > -4,] #Making sure scans occurred within 4 years of each other
+
+
+df$MR_Date.x<-as.Date(df$MR_Date.x, format = "%m/%d/%Y")
+
+df$Age<-as.numeric(difftime(df$MR_Date.x, df$BIRTH, units = "weeks")/52)
+#df<-df[df$Age > 64.99,] #Restricting to only "older adults"
+
+df<-df[df$CDR == 0,] #only cognitively normal
+
+df$apoe4<-ifelse(df$apoe == 24 | df$apoe > 33, 1, 0)
+
+df$PIBpos<-ifelse(df$PUP_fSUVR_rsf_TOT_CORTMEAN.y > 1.419999, 1, 0)
+df$Taupos<-ifelse(df$PUP_fSUVR_rsf_TOT_CORTMEAN.x > 1.22, 1, 0)
+df$AT<-paste(df$PIBpos, df$Taupos, sep = "-")
+df<-df[!(df$AT == "0-1"),] #Dropping SNAP people
+
