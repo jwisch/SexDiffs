@@ -1,0 +1,387 @@
+library(ggplot2)
+library(plyr)
+library(gridExtra)
+library(tableone)
+library(magrittr)
+library(dplyr)
+library(ggseg)
+library(tidyr)
+library(psych)
+library(lme4)
+library(ppcor)
+library(lemon)
+##################################################################################################################
+##################################################################################################################
+#Functions
+#source("W:/ances/julie/Data/StarkRequest/CommonFuncs.r")
+source("C:/Users/julie.wisch/Documents/Stark/CommonFuncs.r")
+source("C:/Users/julie.wisch/Documents/SexDiffs/SexDiffFuncs.r")
+source("C:/Users/julie.wisch/Documents/SexDiffs/SexDiffDataCleaning.r")
+
+##################################################################################################################
+##################################################################################################################
+
+myVars <- c("EDUC", "apoe4", "race2", "Age", "VolRateofChange", "CerebVolRateofChange")
+catVars <- c("apoe4",  "race2")
+CreateTableOne(vars = myVars, data = Hippo.all, factorVars = catVars, strata = "GENDER")
+
+##################################################################################################################
+##################################################################################################################
+
+myVars <- names(df[c(217, 219, 220, 224, 227, 228, 111, 216)])
+## Vector of categorical variables that need transformation
+catVars <- c("apoe4", "CDR", "race2")
+## Create a TableOne object
+CreateTableOne(vars = myVars, data = df, factorVars = catVars, strata = "GENDER")
+
+rm(df.clin, df.demog, df.pib, df.tau, catVars,myVars)
+
+
+df<-merge(df, Hippo.all[,c("ID", "VolRateofChange")], by = "ID", all = FALSE)
+
+rm(df.PET, Hippo, Hippo.all)
+#############################################################################################################################
+#Get PACC
+df.psych<-read.csv("C:/Users/julie.wisch/Documents/Aschenbrenner/ances_psych_092618.csv")
+df.clin<-read.csv("C:/Users/julie.wisch/Documents/Aschenbrenner/ances_clinical_011819.csv")
+
+
+#srtfree, digsym, memunits (or lmdelay) and MMSE. 
+df.psych<-df.psych[,c("ID", "psy_date", "srtfree", "digsym", "MEMUNITS", "lmdelay")]
+df.clin<-df.clin[,c("ID", "cdr", "testdate", "MMSE")]
+
+df.psych$ID<-as.factor(df.psych$ID)
+df.psych$psy_date<-as.Date(df.psych$psy_date, format = "%d-%b-%y")
+
+df.clin$ID<-as.factor(df.clin$ID)
+df.clin$testdate<-as.Date(df.clin$testdate, format = "%d-%b-%y")
+
+df.psych<-MatchbyNearestDate(df.psych, df.clin, "ID", "psy_date", "testdate")
+
+df<-MatchbyNearestDate(df, df.psych, "ID", "PET_Date_tau", "psy_date")
+df$MMSE <- as.numeric(ifelse(!is.na(df$MMSE) & df$MMSE > 30, "NA", df$MMSE)) #Some MMSE values were > 30.  Doesn't make sense.  dropped them.
+
+df[,c(234:237, 240)]<- apply(df[,c(234:237, 240)], 2, scale) 
+
+for(i in 1:length(df$lmdelay)){
+  if(is.na(df[i,"lmdelay"]) == TRUE){df[i, "lmdelay"] <-df[i, "MEMUNITS"]}
+}
+
+
+for(i in 1:length(df$ID)){
+  df$nacount[i]<-sum(is.na(df[i, c(234:235, 237, 240)]))}
+
+
+GetPACC<-function(x){
+  x[is.na(x)] <- 0
+  PACC<-(x[,"srtfree"]+x[,"digsym"]+x[,"lmdelay"]+x[,"MMSE"])/(4-x[,"nacount"])
+  return(PACC)}
+
+
+for(i in 1:length(df$ID)){
+  df$PACC[i]<-GetPACC(df[i,])}
+
+df<-df[df$nacount < 3,]
+
+df<-df[,-c(233:241)]
+
+#############################################################################################################################
+#Max Likelihood Model Selection to test for age-sex-amyloid differences
+df.log<-df
+#log transforming everything since it's so left heavy
+for(i in c(24:111, 129:216)){
+  df.log[,i]<-log(df[,i])
+}
+
+################################################       
+       
+result<-data.frame("Region" = character(), "Amyloid_age" = numeric(), "VolRofC_age" = numeric(), "Sex_age" = numeric(),
+                   stringsAsFactors = FALSE)
+k<-0
+
+for(i in c(24:33, 35:65)){
+  k<-k+1
+  result[k, 1]<-substring(names(df[i]), 15)
+
+  Model.null<-lm(df.log[,i] ~ df.log[,i+105] + Age + GENDER + apoe4 + EDUC, data = df.log)
+  Model.new<-lm(df.log[,i] ~  Age + GENDER + apoe4 + EDUC, data = df.log)
+  result[k, 2]<-anova(Model.null, Model.new)$`Pr(>F)`[2]
+  Model.new<-lm(df.log[,i] ~ df.log[,i+105] +  GENDER + apoe4 + EDUC, data = df.log)
+  result[k, 3]<-anova(Model.null, Model.new)$`Pr(>F)`[2]
+  Model.new<-lm(df.log[,i] ~ df.log[,i+105] + Age + apoe4 + EDUC, data = df.log)
+  result[k, 4]<-anova(Model.null, Model.new)$`Pr(>F)`[2]
+  
+}
+  
+i<-111
+k<-k+1
+result[k, 1]<-substring(names(df.log[i]), 15)
+
+Model.null<-lm(df.log[,i] ~ df.log[,i+105] + Age + GENDER + apoe4 + EDUC, data = df.log)
+Model.new<-lm(df.log[,i] ~  Age + GENDER + apoe4 + EDUC, data = df.log)
+result[k, 2]<-anova(Model.null, Model.new)$`Pr(>F)`[2]
+Model.new<-lm(df.log[,i] ~ df.log[,i+105] +  GENDER + apoe4 + EDUC, data = df.log)
+result[k, 3]<-anova(Model.null, Model.new)$`Pr(>F)`[2]
+Model.new<-lm(df.log[,i] ~ df.log[,i+105] + Age + apoe4 + EDUC, data = df.log)
+result[k, 4]<-anova(Model.null, Model.new)$`Pr(>F)`[2]
+
+rm(Model.new, Model.null, k, i)
+result<-result[complete.cases(result$Amyloid_age),]
+#Significant after bonferroni correction
+result[result$Amyloid_age < 0.05/42,c(1, 2)] #Almost all regions
+result[result$VolRofC_age < 0.05/42,c(1, 3)] #Age - caud, entorhinal, fusiform, lingual, periclcrn
+result[result$Sex_age < 0.05/42,c(1, 4)] #Frontal pole, lateral occipital, pars orbitals, pars triangularis, rostral middle frontal
+#Age and Hippocampal rate of change lead to the exact same result
+Model1<-lm(df.log[,37] ~ df.log[,37+105] + Age + GENDER + apoe4 + EDUC, data = df.log)
+Model2<-lm(df.log[,43] ~ df.log[,43+105] + Age + GENDER + apoe4 + EDUC, data = df.log)
+Model3<-lm(df.log[,51] ~ df.log[,51+105] + Age + GENDER + apoe4 + EDUC, data = df.log)
+Model4<-lm(df.log[,52] ~ df.log[,52+105] + Age + GENDER + apoe4 + EDUC, data = df.log)
+Model5<-lm(df.log[,59] ~ df.log[,59+105] + Age + GENDER + apoe4 + EDUC, data = df.log)
+ Model8<-lm(df.log[,111] ~ df.log[,111+105] + Age + GENDER + apoe4 + EDUC, data = df.log)
+
+library(stargazer)
+stargazer(Model1, Model2, Model3, Model4, Model5, Model8, title = "Tau Relative to Amyloid Differs Between Males and Females",
+          align= TRUE, type = "html", out = "C:/Users/julie.wisch/Documents/SexDiffs/table_revised_logtrans.htm",
+          dep.var.labels = c("Frontal Pole", "Lateral Occipital", "Middle Temporal", "Pars Orbitalis",
+                             "Pars Triangularis", "Rostral Middle Frontal", "Global Cortical"),
+          covariate.labels=c("Amyloid", "Age", "Male", "APOE4+", "Education", "Intercept"),
+          omit.stat=c("LL","ser"),
+          ci = TRUE, ci.level = 0.95)
+
+
+
+#It looks like there's an overall difference, but it goes away when you do multiple comparisons correction....
+
+result[result$Region == "TOT_CORTMEAN.x",] #p = 0.0535 for log transformed data p = 0.0813
+
+
+p1<-GenerateProjectionPlot(37, Model1, "Frontal Pole Amyloid", "Frontal Pole Tau") + theme(legend.position = "none")
+p2<-GenerateProjectionPlot(43, Model2, "Lateral Occipital Amyloid", "Lateral Occipital Tau")+ theme(legend.position = "none")
+p3<-GenerateProjectionPlot(51, Model3, "Pars Orbitalis Amyloid", "Pars Orbitalis Tau")+ theme(legend.position = "none")
+p4<-GenerateProjectionPlot(52, Model4, "Pars Triangularis Amyloid", "Pars TriangularisTau")+ theme(legend.position = "none")
+p5<-GenerateProjectionPlot(59, Model5, "Rostral Middle Frontal Amyloid", "Rostral Middle Frontal Tau")+ theme(legend.position = "none")
+p6<-GenerateProjectionPlot(111, Model8, "Global Cortical Amyloid", "Global Cortical Tau")+ theme(legend.position = "none")
+
+grid_arrange_shared_legend(p1, p2, p3, p4, p5, p6, ncol = 3, nrow = 2, position = "bottom")
+
+rm(p1, p2, p3, p4, p5, p8, Model1, Model2, Model3, Model4, Model5, Model8)
+
+
+#Making Figure 2
+results = data.frame(cbind(area=c("banks superior temporal", "caudal anterior cingulate",
+                                  "caudal middle frontal", "cuneus", "entorhinal",
+                                  "frontal pole", "fusiform", "inferior parietal",
+                                  "inferior temporal", "insula", "isthmus cingulate",
+                                  "lateral occipital", "lateralorbito frontal", "lingual",
+                                  "medial orbitofrontal", "middle temporal", "para central",
+                                  "parahippocampal", "pars opercularis", "pars orbitalis",
+                                  "pars triangularis", "pericalcarine", "post central",
+                                  "posterior cingulate", "pre central", "precuneus",
+                                  "rostral anterior cingulate", "rostral middle frontal",
+                                  "superior frontal", "superior parietal", "superior temporal",
+                                  "supramarginal", "temporal pole", "transverse temporal"),
+                           em=result[ c(8:41), 4]),
+                           #em = replicate(7, 1)),
+                     #hemi=replicate(7, "left"),
+                     stringsAsFactors=F)
+
+results %>% 
+  ggseg(mapping=aes(fill=as.numeric(em)), position="stacked", colour="white",size=.2,
+        show.legend = T) + xlab("") + ylab("") + ggtitle("Regions with Sex-Linked \nTau Accumulation Differences")
+
+results = data.frame(cbind(area=c("frontal pole", "lateral occipital", "pars orbitalis",
+                                  "pars triangularis", "rostral middle frontal"),
+                           #em=result[ c(8:41), 4]),
+                     em = replicate(5, 1)),
+                     #hemi=replicate(7, "left"),
+                     stringsAsFactors=F)
+
+results %>% 
+  ggseg(mapping=aes(fill=as.numeric(em)), position="stacked", colour="white",size=.2,
+        show.legend = F) + xlab("") + ylab("") + ggtitle("Regions with Sex-Linked \nTau Accumulation Differences")
+
+rm(results)
+##################################################################################
+#What percent of men vs women are biomarker positive but cognitively normal?
+
+table(df$GENDER, df$AT)
+
+
+prop.test(as.vector(table(df$GENDER, df$AT)[1,]), 
+                   as.vector(table(df$GENDER, df$AT)[1,]) +as.vector(table(df$GENDER, df$AT)[2,]))
+#There's a not an equal proportion of women:men in each group. p = 0.02056, chisq = 9.7767
+
+pairwise.prop.test(as.vector(table(df$GENDER, df$AT)[1,]), 
+          as.vector(table(df$GENDER, df$AT)[1,]) +as.vector(table(df$GENDER, df$AT)[2,]), p.adjust.method = "none")
+#the difference is between amyloid negative - tau negative proportion and amyloid negative - tau positive
+#As well as between amyloid negative - tau positive and amyloid positive - tau negative
+cat1<- c(rep("A-T-", 37), rep("A+T-", 8),  rep("A+T+", 5),
+         rep("A-T-", 43), rep("A+T-", 8),  rep("A+T+", 7))
+cat2<- c(rep("Male", 50), rep("Female", 58))
+df2 <- as.data.frame(cbind(cat1, cat2))
+mosaicplot(cat1 ~ cat2, data = df2, col = c('#F8766D', '#00BFC4'))
+
+##################################################################################
+#Now looking for relationship between Tau, Amyloid, and sex that we saw in PET scans
+CSF<-read.csv("C:/Users/julie.wisch/Documents/ADRC/OI_Schindler_2018_01_01.csv")
+#CSF<-read.csv("W:/ances/julie/Data/ADRC/Aggregated/OI_Schindler_2018_01_01.csv")
+
+CSF<-CSF[CSF$CDR == 0,] #only keeping cognitively normals
+CSF<-CSF[,c(1:4, 6:11, 21:26)]
+CSF$LP_date<-as.Date(CSF$LP_date, format = "%d-%b-%y")
+CSF<-CSF[complete.cases(CSF$GENDER),]
+CSF$GENDER<-revalue(as.factor(CSF$GENDER), c("2"="female", "1"="male"))
+CSF<-CSF[with(CSF, order(MAP_ID, LP_date)),]
+CSF<-ddply(CSF,.(MAP_ID), tail, 1)
+CSF$PIBposbyCSF<-ifelse(CSF$E_ptau/CSF$E_ab42 <  0.0198,  0, 1)
+
+
+
+CSF<-CSF[complete.cases(CSF$age_at_lp),]
+colnames(CSF)[5]<-"apoe4"
+CSF$logAB42<-log(CSF$E_ab42)
+CSF$logptau<-log(CSF$E_ptau)
+
+df.clin<-read.csv("C:/Users/julie.wisch/Documents/ADRC/DR_clinical_20190122.csv")
+#df.clin<-read.csv("W:/ances/julie/Data/ADRC/Aggregated/DR_clinical_20190122.csv")
+df.clin$TESTDATE<-as.Date(df.clin$TESTDATE, format = "%Y-%m-%d")
+df.clin<-df.clin[,2:4]
+colnames(CSF)[1]<-"ID"
+CSF<-MatchbyNearestDate(CSF, df.clin, "ID", "LP_date", "TESTDATE")
+CSF<-CSF[CSF$CDR == 0,]
+TestCSFSignificance<-function(DF){
+  result<-data.frame("Region" = character(), "Amyloid" = numeric(), "Age" = numeric(), "Sex" = numeric(),
+                      stringsAsFactors = FALSE)
+  result[1, 1]<-"CSF"
+  Model.null<-lm(logptau ~ logAB42 + age_at_lp + GENDER + apoe4 + EDUC, data = DF)
+  Model.new<-lm(logptau ~  age_at_lp + GENDER + apoe4 + EDUC, data = DF)
+  result[1, 2]<-anova(Model.null, Model.new)$`Pr(>F)`[2]
+  Model.new<-lm(logptau ~ logAB42 +  GENDER + apoe4 + EDUC, data = DF)
+  result[1, 3]<-anova(Model.null, Model.new)$`Pr(>F)`[2]
+  Model.new<-lm(logptau ~ logAB42 + age_at_lp + apoe4 + EDUC, data = DF)
+  result[1, 4]<-anova(Model.null, Model.new)$`Pr(>F)`[2]
+  return(result)
+}
+
+#The sex differences that we see in PET don't carry over
+TestCSFSignificance(CSF)
+TestCSFSignificance(CSF[CSF$PIBpos == 1,])
+
+summary(lm(logptau ~ logAB42 + age_at_lp + GENDER + apoe4 + EDUC, data = CSF))
+
+
+ggplot(CSF, aes_string(x = "logAB42", y = "logptau", group = "GENDER", colour = "GENDER", shape = "GENDER")) + geom_point() + 
+  geom_smooth(method = "lm")+ scale_colour_manual("sex", values = c("#00BFC4",  "#F8766D")) + 
+  scale_shape_manual("sex", values = c(2, 1)) + ylab("Tau")+ xlab("Amyloid") + theme(legend.position="bottom")+ 
+  guides(fill=guide_legend(title="sex")) + ggtitle("CSF")
+
+
+myVars <- c("EDUC", "apoe4", "Race", "age_at_lp", "VolRateofChange", "CerebVolRateofChange")
+catVars <- c("apoe4",  "Race")
+CreateTableOne(vars = myVars, data = CSF, factorVars = catVars, strata = "GENDER")
+
+rm(model.new, model.null, CSF)
+
+#Checking for relationship with HippVOl
+index<-c(37, 43, 51, 52, 59, 111, 
+         37 + 105, 43 + 105, 51 + 105, 52 + 105,
+         59 + 105,  216)
+df.log<-MatchbyNearestDate(df.log, Hippo.hold[,c("ID", "MR_Date", "Vol")], "ID", "PET_Date_tau", "MR_Date")
+result4<-data.frame("Region" = character(), "Pathology" = numeric(), "Sex" = numeric(), "Interaction" = numeric(), stringsAsFactors = FALSE)
+for(k in 1:length(index)){
+  i<-index[k]  
+  result4[k, 1]<-names(df.log[i])
+  model.null<-lm(Vol ~ df.log[,i]  + GENDER + df.log[,i]:GENDER + Age + apoe4 + EDUC, data = df.log)
+  model<-lm(Vol ~ GENDER + Age + apoe4 + EDUC, data = df.log)
+  result4[k, 2]<-anova(model, model.null)$'Pr(>F)'[2]
+  model<-lm(Vol ~ df.log[,i]  + Age + apoe4 + EDUC, data = df.log)
+  result4[k, 3]<-anova(model, model.null)$'Pr(>F)'[2]
+  model<-lm(Vol ~ df.log[,i] + GENDER + Age + apoe4 + EDUC, data = df.log)
+  result4[k, 4]<-anova(model, model.null)$'Pr(>F)'[2] }
+
+result4<-result4[complete.cases(result4$Pathology),]
+result4[result4$Pathology < 0.05/length(index),] #no pathology differences that correlate with volumes
+result4[result4$Sex < 0.05/length(index),]
+result4[result4$Interaction < 0.05/length(index),]
+
+
+result5<-data.frame("Region" = character(), "Pathology" = numeric(), "Sex" = numeric(), "Interaction" = numeric(), stringsAsFactors = FALSE)
+for(k in 1:length(index)){
+  i<-index[k]  
+  result5[k, 1]<-names(df.log[i])
+  model.null<-lm(VolRateofChange ~ df.log[,i]  + GENDER + df.log[,i]:GENDER + Age + apoe4 + EDUC, data = df.log)
+  model<-lm(VolRateofChange ~ GENDER + Age + apoe4 + EDUC, data = df.log)
+  result5[k, 2]<-anova(model, model.null)$'Pr(>F)'[2]
+  model<-lm(VolRateofChange ~ df.log[,i]  + Age + apoe4 + EDUC, data = df.log)
+  result5[k, 3]<-anova(model, model.null)$'Pr(>F)'[2]
+  model<-lm(VolRateofChange ~ df.log[,i] + GENDER + Age + apoe4 + EDUC, data = df.log)
+  result5[k, 4]<-anova(model, model.null)$'Pr(>F)'[2] }
+
+result5[result5$Pathology < 0.05/length(index),] #Tau level in rostral middle frontal persists even after controlling for sex
+result5[result5$Sex < 0.05/length(index),] #Sex differences in rate of change in the frontal pole, and rostral middle frontal tau
+result5[result5$Interaction < 0.05/length(index),] #Tau by Sex differences in rate of change in the frontal pole and rostral middle frontal
+
+#more tau = higher R of C for women
+(lm(VolRateofChange ~ PUP_fSUVR_rsf_TOT_CTX_ROSMIDFRN.x  + GENDER + PUP_fSUVR_rsf_TOT_CTX_ROSMIDFRN.x :GENDER + Age + apoe4 + EDUC, data = df.log))
+
+(lm(VolRateofChange ~ PUP_fSUVR_rsf_TOT_CTX_FRNPOLE.x  + GENDER + PUP_fSUVR_rsf_TOT_CTX_FRNPOLE.x:GENDER + Age + apoe4 + EDUC, data = df.log))
+
+
+t.test(df.log[df.log$GENDER == "male","VolRateofChange"],
+       df.log[df.log$GENDER == "female","VolRateofChange"])
+
+ggplot(df.log, aes(x = GENDER, y = VolRateofChange, fill = GENDER)) + geom_boxplot()
+
+p1<-ggplot(df.log, aes_string(x = "PUP_fSUVR_rsf_TOT_CTX_FRNPOLE.x", y = "VolRateofChange", group = "GENDER", colour = "GENDER", shape = "GENDER")) + geom_point() + 
+  geom_smooth(method = "lm")+ scale_colour_manual("sex", values = c( "#F8766D", "#00BFC4")) + 
+  scale_shape_manual("sex", values = c(2, 1)) + ylab("Hippocampal Volume Rate of Change")+ xlab("Total Frontal Pole Tau Accumulation") + theme(legend.position="none")+ 
+  guides(fill=guide_legend(title="sex"))
+p2<-ggplot(df.log, aes_string(x = "PUP_fSUVR_rsf_TOT_CTX_ROSMIDFRN.x", y = "VolRateofChange", group = "GENDER", colour = "GENDER", shape = "GENDER")) + geom_point() + 
+  geom_smooth(method = "lm")+ scale_colour_manual("sex", values = c( "#F8766D", "#00BFC4")) + 
+  scale_shape_manual("sex", values = c(2, 1)) + ylab("Hippocampal Volume Rate of Change")+ xlab("Rostral Middle Frontal Tau Accumulation") + theme(legend.position="none")+ 
+  guides(fill=guide_legend(title="sex"))
+grid_arrange_shared_legend(p1, p2, nrow = 1, ncol = 2, position = "bottom")
+#Hippocampal volume rate of change - which is a marker of neurodegeneration - correlates with 
+#tau accumulation in the middle frontal area of the brain (pars triangularis and rostral middle frontal)
+#This difference matters on a sex-linked basis, but persists beyond differences simply explained by sex
+#Neurodegenerative-associated decline is affected by the tau:amyloid differences
+
+
+# PACC<-read.csv("C:/users/julie.wisch/Documents/ADRC/PACCSummary.csv")
+# PACC$psy_date<-as.Date(PACC$psy_date, format = "%m/%d/%Y")
+# df.log<-MatchbyNearestDate(df.log, PACC, "ID", "PET_Date_tau", "psy_date")
+
+result6<-data.frame("Region" = character(), "Pathology" = numeric(), "Sex" = numeric(), "Interaction" = numeric(), stringsAsFactors = FALSE)
+for(k in 1:length(index)){
+  i<-index[k]  
+  result6[k, 1]<-names(df.log[i])
+  model.null<-lm(PACC ~ df.log[,i]  + GENDER + df.log[,i]:GENDER + Age + apoe4 + EDUC, data = df.log)
+  model<-lm(PACC ~ GENDER + Age + apoe4 + EDUC, data = df.log)
+  result6[k, 2]<-anova(model, model.null)$'Pr(>F)'[2]
+  model<-lm(PACC ~ df.log[,i]  + Age + apoe4 + EDUC, data = df.log)
+  result6[k, 3]<-anova(model, model.null)$'Pr(>F)'[2]
+  model<-lm(PACC ~ df.log[,i] + GENDER + Age + apoe4 + EDUC, data = df.log)
+  result6[k, 4]<-anova(model, model.null)$'Pr(>F)'[2] }
+
+result6<-result6[complete.cases(result6$Pathology),]
+result6[result6$Pathology < 0.05/length(index),] #no pathology differences that correlate with volumes
+result6[result6$Sex < 0.05/length(index),] #Sex differences in the pack in 4/5 the regions that were highlighted earlier
+#I think that points to the fact that women can compensate w/r/t cognition even though they have different pathology in those regions
+result6[result6$Interaction < 0.05/length(index),]
+
+library(ggpubr)
+p6<-ggboxplot(df.log, x = "GENDER", y = "PACC", fill = "GENDER") + stat_compare_means() + theme(legend.position = "none")
+
+p1<-PACCplot("PUP_fSUVR_rsf_TOT_CTX_PARSORBLS.y", "Pars Orbitalis Amyloid")
+p2<-PACCplot("PUP_fSUVR_rsf_TOT_CTX_PARSORBLS.x", "Pars Orbitalis Tau")
+p3<-PACCplot("PUP_fSUVR_rsf_TOT_CTX_FRNPOLE.x", "Frontal Pole Tau")
+p4<-PACCplot("PUP_fSUVR_rsf_TOT_CTX_PARSTRNGLS.x", "Pars Triangularis Tau")
+p5<-PACCplot("PUP_fSUVR_rsf_TOT_CTX_ROSMIDFRN.x", "Rostral Middle Frontal Tau")
+
+grid_arrange_shared_legend(p1, p2, p3, p4, p5, p6, ncol = 3, nrow = 2, position = "bottom")
+#Conclusion:  There are several regions where women have more tau than men. 
+#Some of these regions are associated with a significantly increased hippocampal volume decline, meaning that this tau is having a neurodegenerative impact
+#HOWEVER in models that compare PACC scores between men and women with respect to either amyloid or tau pathology,
+#there are 5 regions that have significantly different PACC scores on the basis of sex:
+#Frontal pole tau, lateral occipital amyloid, pars orbitalis amyloid, pars triangularis amyloid, and rostral middle frontal amyloid
+#Suggesting that even though women have more disease pathology in these regions and are showing increased neurodegeneration as measured by hippocampal volume rate of change, they are able to compensate for this pathology
